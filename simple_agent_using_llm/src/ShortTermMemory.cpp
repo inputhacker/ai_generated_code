@@ -57,7 +57,8 @@ std::string ShortTermMemory::getContextForNewQuery(const std::string& newQuery) 
         contextStream << msg.getRoleString() << ": " << msg.content << "\n\n";
     }
     
-    contextStream << "user: " << newQuery;
+    // comment not to include the new query twice in the context
+    // contextStream << "user: " << newQuery;
     
     return contextStream.str();
 }

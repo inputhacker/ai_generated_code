@@ -31,10 +31,12 @@ std::string UserAgent::processQuery(const std::string& query) {
     
     // 관련 컨텍스트 준비
     std::string prompt = memoryManager->preparePromptForNewQuery(query);
+
+    std::cout << "[프롬프트--시작]" << std::endl << prompt << std::endl << "[프롬프트--끝]" << std::endl;
     
     // 장기 기억에서 관련 대화 검색 (필요시)
     std::vector<std::string> relevantConversations;
-    if (query.length() > 10) { // 간단한 예시 조건
+    if (query.length() > 0) { // 간단한 예시 조건
         relevantConversations = memoryManager->retrieveRelevantConversations(query);
         
         // 관련 대화가 있으면 프롬프트에 추가
