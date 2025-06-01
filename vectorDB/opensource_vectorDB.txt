@@ -1,0 +1,5 @@
+라즈베리파이 4/5에 적합한 오픈소스 벡터 데이터베이스
+
+- Faiss-lite: Facebook AI의 Faiss의 경량화 버전
+- Hnswlib: 임베디드 환경에서도 효율적으로 작동하는 ANN(Approximate Nearest Neighbor) 라이브러리
+- Sentence-transformers-lite: 텍스트 임베딩을 위한 경량화 버전 (C++ 바인딩)
