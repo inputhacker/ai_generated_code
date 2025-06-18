@@ -1,0 +1,10 @@
+{
+  "contents": {
+    "role": "user",
+    "parts": [
+      {
+        "text": "안녕하세요, Gemini! 오늘 날씨 어때?"
+      }
+    ]
+  }
+}
