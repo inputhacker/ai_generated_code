@@ -1,7 +1,9 @@
 from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.responses import StreamingResponse
 import uvicorn
 import json
-from typing import Dict, Any, List, Optional
+import asyncio
+from typing import Dict, Any, List, Optional, AsyncGenerator
 from pydantic import BaseModel, Field
 
 app = FastAPI()
@@ -11,6 +13,7 @@ class MCPTool(BaseModel):
     name: str
     description: str
     input_schema: Dict[str, Any]
+    streaming: bool = True  # 스트리밍 지원 표시
 
 class MCPResource(BaseModel):
     name: str
@@ -27,6 +30,7 @@ mcp_tools = [
     {
         "name": "add",
         "description": "두 숫자를 더합니다.",
+        "streaming": True,  # 스트리밍 지원 표시
         "input_schema": {
             "type": "object",
             "properties": {
@@ -39,6 +43,7 @@ mcp_tools = [
     {
         "name": "multiply",
         "description": "두 숫자를 곱합니다.",
+        "streaming": True,  # 스트리밍 지원 표시
         "input_schema": {
             "type": "object",
             "properties": {
@@ -77,11 +82,15 @@ async def mcp_manifest():
     return {
         "schema_version": "mcp-0.1",
         "api_version": "0.1.0",
-        "name": "Simple MCP Calculator Server",
-        "description": "간단한 계산 기능을 제공하는 MCP 서버",
+        "name": "Streaming MCP Calculator Server",
+        "description": "스트리밍을 지원하는 계산 기능 MCP 서버",
         "tools_url": "/mcp/tools",
         "resources_url": "/mcp/resources",
-        "prompts_url": "/mcp/prompts"
+        "prompts_url": "/mcp/prompts",
+        "transport": {
+            "type": "http",
+            "streaming": True  # 서버가 스트리밍을 지원함을 명시
+        }
     }
 
 @app.get("/mcp/tools")
@@ -114,15 +123,51 @@ async def get_prompts():
 
 class ToolRequest(BaseModel):
     parameters: Dict[str, Any]
+    stream: bool = False  # 클라이언트가 스트리밍을 요청하는지 여부
+
+# 스트리밍 응답을 생성하는 함수
+async def stream_add(a: float, b: float) -> AsyncGenerator[str, None]:
+    # 계산 과정을 스트리밍으로 보여주기
+    yield json.dumps({"status": "processing", "message": "입력값 검증 중..."}) + "\n"
+    await asyncio.sleep(0.5)  # 실제 서비스에서는 필요에 따라 조정
+    
+    yield json.dumps({"status": "processing", "message": f"{a}와 {b}를 더하는 중..."}) + "\n"
+    await asyncio.sleep(0.5)  # 실제 서비스에서는 필요에 따라 조정
+    
+    result = a + b
+    yield json.dumps({"status": "complete", "result": result}) + "\n"
+
+async def stream_multiply(a: float, b: float) -> AsyncGenerator[str, None]:
+    # 계산 과정을 스트리밍으로 보여주기
+    yield json.dumps({"status": "processing", "message": "입력값 검증 중..."}) + "\n"
+    await asyncio.sleep(0.5)  # 실제 서비스에서는 필요에 따라 조정
+    
+    yield json.dumps({"status": "processing", "message": f"{a}와 {b}를 곱하는 중..."}) + "\n"
+    await asyncio.sleep(0.5)  # 실제 서비스에서는 필요에 따라 조정
+    
+    result = a * b
+    yield json.dumps({"status": "complete", "result": result}) + "\n"
 
 @app.post("/mcp/tools/add")
 async def execute_add(request: ToolRequest):
     params = request.parameters
+    
     if "a" not in params or "b" not in params:
         raise HTTPException(status_code=400, detail="Missing required parameters: a, b")
     
     try:
-        result = float(params["a"]) + float(params["b"])
+        a = float(params["a"])
+        b = float(params["b"])
+        
+        # 스트리밍 응답 요청 시
+        if request.stream:
+            return StreamingResponse(
+                stream_add(a, b),
+                media_type="application/x-ndjson"
+            )
+        
+        # 스트리밍 아닌 경우 일반 응답
+        result = a + b
         return {"result": result}
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid parameters: a and b must be numbers")
@@ -130,14 +175,26 @@ async def execute_add(request: ToolRequest):
 @app.post("/mcp/tools/multiply")
 async def execute_multiply(request: ToolRequest):
     params = request.parameters
+    
     if "a" not in params or "b" not in params:
         raise HTTPException(status_code=400, detail="Missing required parameters: a, b")
     
     try:
-        result = float(params["a"]) * float(params["b"])
+        a = float(params["a"])
+        b = float(params["b"])
+        
+        # 스트리밍 응답 요청 시
+        if request.stream:
+            return StreamingResponse(
+                stream_multiply(a, b),
+                media_type="application/x-ndjson"
+            )
+        
+        # 스트리밍 아닌 경우 일반 응답
+        result = a * b
         return {"result": result}
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid parameters: a and b must be numbers")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
