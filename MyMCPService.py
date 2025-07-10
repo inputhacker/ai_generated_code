@@ -1,72 +1,59 @@
-from fastmcp import FastMCPApp, MCPRouter, MCPResponse
+from mcp.server.fastmcp import FastMCP, Router
+from mcp.protocol import Response
 from typing import List, Dict, Any, Optional
 import base64
 import os
-from pydantic import BaseModel
 
-# 모델 정의
-class CalculationRequest(BaseModel):
-    a: float
-    b: float
-
-class FilePathRequest(BaseModel):
-    path: str
-
-class TemplateRequest(BaseModel):
-    name: str
-    age: int
-    interests: List[str]
-
-# MCP 라우터 생성
-router = MCPRouter()
-app = FastMCPApp(router=router)
+# MCP 라우터 및 앱 초기화
+router = Router()
+app = FastMCP(router=router)
 
 # 1. 계산 기능 구현 (Tools API)
-@router.tools_api("/calculate/add")
-async def add_numbers(req: CalculationRequest) -> Dict[str, float]:
+@router.tools("/calculate/add")
+async def add_numbers(a: float, b: float) -> Dict[str, float]:
     """두 숫자를 더합니다."""
-    return {"result": req.a + req.b}
+    return {"result": a + b}
 
-@router.tools_api("/calculate/subtract")
-async def subtract_numbers(req: CalculationRequest) -> Dict[str, float]:
+@router.tools("/calculate/subtract")
+async def subtract_numbers(a: float, b: float) -> Dict[str, float]:
     """두 숫자를 뺍니다."""
-    return {"result": req.a - req.b}
+    return {"result": a - b}
 
-@router.tools_api("/calculate/multiply")
-async def multiply_numbers(req: CalculationRequest) -> Dict[str, float]:
+@router.tools("/calculate/multiply")
+async def multiply_numbers(a: float, b: float) -> Dict[str, float]:
     """두 숫자를 곱합니다."""
-    return {"result": req.a * req.b}
+    return {"result": a * b}
 
-@router.tools_api("/calculate/divide")
-async def divide_numbers(req: CalculationRequest) -> Dict[str, float]:
+@router.tools("/calculate/divide")
+async def divide_numbers(a: float, b: float) -> Dict[str, float]:
     """두 숫자를 나눕니다. 0으로 나눌 수 없습니다."""
-    if req.b == 0:
+    if b == 0:
         raise ValueError("0으로 나눌 수 없습니다.")
-    return {"result": req.a / req.b}
+    return {"result": a / b}
 
 # 3. 텍스트 파일 읽기 (Resources API)
-@router.resources_api("/read/text")
-async def read_text_file(req: FilePathRequest) -> Dict[str, str]:
+@router.resources("/read/text")
+async def read_text_file(path: str) -> Dict[str, str]:
     """지정된 경로의 텍스트 파일을 읽어서 반환합니다."""
     try:
-        with open(req.path, 'r', encoding='utf-8') as file:
+        with open(path, 'r', encoding='utf-8') as file:
             content = file.read()
         return {"content": content}
     except FileNotFoundError:
-        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {req.path}")
+        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {path}")
     except Exception as e:
         raise Exception(f"파일 읽기 오류: {str(e)}")
 
 # 4. 이미지 파일 읽기 (Resources API)
-@router.resources_api("/read/image")
-async def read_image_file(req: FilePathRequest) -> Dict[str, str]:
+@router.resources("/read/image")
+async def read_image_file(path: str) -> Dict[str, str]:
     """지정된 경로의 이미지 파일을 base64로 인코딩하여 반환합니다."""
     try:
-        with open(req.path, 'rb') as file:
+        with open(path, 'rb') as file:
             image_data = file.read()
         
         # 이미지 파일 확장자 확인
-        _, file_extension = os.path.splitext(req.path)
+        _, file_extension = os.path.splitext(path)
         file_extension = file_extension.lower().replace('.', '')
         
         # 이미지 MIME 타입 설정
@@ -85,21 +72,21 @@ async def read_image_file(req: FilePathRequest) -> Dict[str, str]:
         
         return {"image_data": data_url}
     except FileNotFoundError:
-        raise FileNotFoundError(f"이미지 파일을 찾을 수 없습니다: {req.path}")
+        raise FileNotFoundError(f"이미지 파일을 찾을 수 없습니다: {path}")
     except Exception as e:
         raise Exception(f"이미지 파일 읽기 오류: {str(e)}")
 
 # 5. MCP 리소스 템플릿 API 예제
-@router.resources_api("/template/user")
-async def user_template(req: TemplateRequest) -> Dict[str, Any]:
+@router.resources("/template/user")
+async def user_template(name: str, age: int, interests: List[str]) -> Dict[str, Any]:
     """사용자 정보를 기반으로 템플릿을 생성합니다."""
     # 템플릿 예제
     template = {
         "user_info": {
-            "name": req.name,
-            "age": req.age,
-            "interests": req.interests,
-            "profile_summary": f"{req.name}님은 {req.age}세이며, {', '.join(req.interests)}에 관심이 있습니다."
+            "name": name,
+            "age": age,
+            "interests": interests,
+            "profile_summary": f"{name}님은 {age}세이며, {', '.join(interests)}에 관심이 있습니다."
         },
         "generated_at": "현재 시간 기준으로 생성됨"
     }
@@ -107,8 +94,8 @@ async def user_template(req: TemplateRequest) -> Dict[str, Any]:
     return template
 
 # 6. MCP 프롬프트 형태의 API 예제
-@router.prompt_api("/generate/greeting")
-async def generate_greeting(prompt: str, name: Optional[str] = None, formal: bool = True) -> MCPResponse:
+@router.prompt("/generate/greeting")
+async def generate_greeting(prompt: str, name: Optional[str] = None, formal: bool = True) -> Response:
     """
     인사말을 생성하는 API입니다.
     
@@ -129,10 +116,10 @@ async def generate_greeting(prompt: str, name: Optional[str] = None, formal: boo
     else:
         full_greeting = base_greeting + "만나서 반갑습니다."
     
-    return MCPResponse(content=full_greeting)
+    return Response(content=full_greeting)
 
 # 2. MCP 서버에서 제공하는 모든 API에 대한 설명을 제공
-@router.description_api()
+@router.description()
 async def get_api_description() -> Dict[str, Any]:
     """MCP 서버에서 제공하는 모든 API에 대한 설명을 반환합니다."""
     return {
