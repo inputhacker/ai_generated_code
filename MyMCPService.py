@@ -1,8 +1,17 @@
 import json
-import sys
 import base64
 import os
+import logging
 from typing import Dict, List, Any, Optional, Union, Tuple
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('mcp_server')
 
 # MCP 프로토콜에 따른 응답을 생성하는 클래스
 class MCPServer:
@@ -34,6 +43,7 @@ class MCPServer:
                 return self.error_response("API not specified")
             
             api = request["api"]
+            logger.info(f"Processing request for API: {api}")
             
             if api == "describe":
                 return self.describe_api()
@@ -53,6 +63,7 @@ class MCPServer:
                 return self.error_response(f"Unknown API: {api}")
                 
         except Exception as e:
+            logger.exception("Error processing request")
             return self.error_response(str(e))
     
     def describe_api(self) -> Dict[str, Any]:
@@ -267,35 +278,81 @@ class MCPServer:
             }
         }
 
-# STDIO transport를 처리하는 메인 함수
-def main():
-    server = MCPServer()
+# HTTP 핸들러 클래스
+class MCPHttpHandler(BaseHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        self.mcp_server = MCPServer()
+        super().__init__(*args, **kwargs)
     
-    while True:
+    def do_GET(self):
+        """GET 요청 처리"""
+        self._handle_request()
+    
+    def do_POST(self):
+        """POST 요청 처리"""
+        self._handle_request()
+    
+    def _handle_request(self):
+        """모든 HTTP 요청을 처리하는 공통 메소드"""
         try:
-            # 표준 입력에서 요청을 읽습니다.
-            request_line = sys.stdin.readline()
-            if not request_line:
-                break
-                
-            # JSON 요청을 파싱합니다.
-            try:
-                request = json.loads(request_line)
-            except json.JSONDecodeError:
-                response = server.error_response("Invalid JSON request")
-            else:
-                # 요청을 처리합니다.
-                response = server.process_request(request)
+            # URL 파싱 및 쿼리 파라미터 추출
+            parsed_url = urllib.parse.urlparse(self.path)
+            path = parsed_url.path
             
-            # 응답을 표준 출력으로 전송합니다.
-            sys.stdout.write(json.dumps(response) + "\n")
-            sys.stdout.flush()
+            # /mcp 엔드포인트로만 처리
+            if not path.startswith('/mcp'):
+                self.send_error(404, "Not found")
+                return
+            
+            # 요청 바디 읽기
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+            
+            try:
+                # JSON 파싱
+                request = json.loads(post_data.decode('utf-8'))
+                logger.info(f"Received request: {request}")
+                
+                # MCP 서버 처리
+                response = self.mcp_server.process_request(request)
+                
+                # 응답 전송
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')  # CORS 지원
+                self.end_headers()
+                
+                response_json = json.dumps(response)
+                self.wfile.write(response_json.encode('utf-8'))
+                
+            except json.JSONDecodeError:
+                logger.error("Invalid JSON in request")
+                self.send_error(400, "Invalid JSON format")
             
         except Exception as e:
-            # 예외가 발생한 경우 오류 응답을 전송합니다.
-            error_response = server.error_response(f"Server error: {str(e)}")
-            sys.stdout.write(json.dumps(error_response) + "\n")
-            sys.stdout.flush()
+            logger.exception("Error handling request")
+            self.send_error(500, f"Internal server error: {str(e)}")
+
+# 스트리밍 가능한 HTTP 서버 클래스
+class StreamableHTTPServer(HTTPServer):
+    def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+        logger.info(f"Server started at http://{server_address[0]}:{server_address[1]}")
+
+def main():
+    """메인 함수"""
+    # 서버 설정 및 시작
+    server_address = ('', 8000)  # 기본 포트 8000
+    httpd = StreamableHTTPServer(server_address, MCPHttpHandler)
+    
+    try:
+        logger.info("MCP Server is running on port 8000...")
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Server shutting down...")
+    finally:
+        httpd.server_close()
+        logger.info("Server closed.")
 
 if __name__ == "__main__":
     main()
