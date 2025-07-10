@@ -1,260 +1,301 @@
-import asyncio
-import base64
 import json
-import mimetypes
+import sys
+import base64
 import os
-from pathlib import Path
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Any, Optional, Union, Tuple
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-
-app = FastAPI(title="MCP Server Example")
-
-# MCP 모델 정의
-class MCPCalculatorInput(BaseModel):
-    a: float = Field(..., description="첫 번째 숫자")
-    b: float = Field(..., description="두 번째 숫자")
-
-class MCPFilePathInput(BaseModel):
-    path: str = Field(..., description="파일 경로")
-
-class MCPTemplateInput(BaseModel):
-    name: str = Field(..., description="템플릿에 표시할 이름")
-    greeting: str = Field(..., description="인사말")
-    message: str = Field(..., description="메시지")
-
-class MCPPromptInput(BaseModel):
-    system_prompt: str = Field(..., description="시스템 프롬프트")
-    user_prompt: str = Field(..., description="사용자 프롬프트")
-
-class ResourceData(BaseModel):
-    type: str
-     str
-    mime_type: str
-
-class ToolCallResult(BaseModel):
-    content: Union[str, float, Dict[str, Any], List[Any]]
-
-class MCPResponse(BaseModel):
-    type: str = "mcp_completion"
-    choices: List[Dict[str, Any]]
-    
-# MCP 서버 구현
-@app.get("/v1/mcp/metadata")
-async def get_metadata():
-    """MCP 서버의 메타데이터를 반환합니다."""
-    return {
-        "type": "mcp_metadata",
-        "capabilities": {
+# MCP 프로토콜에 따른 응답을 생성하는 클래스
+class MCPServer:
+    def __init__(self):
+        # API 설명을 저장하는 딕셔너리
+        self.api_descriptions = {
             "tools": {
-                "add": {
-                    "description": "두 숫자를 더합니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "a": {"type": "number", "description": "첫 번째 숫자"},
-                            "b": {"type": "number", "description": "두 번째 숫자"}
-                        },
-                        "required": ["a", "b"]
-                    }
-                },
-                "subtract": {
-                    "description": "첫 번째 숫자에서 두 번째 숫자를 뺍니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "a": {"type": "number", "description": "첫 번째 숫자"},
-                            "b": {"type": "number", "description": "두 번째 숫자"}
-                        },
-                        "required": ["a", "b"]
-                    }
-                },
-                "multiply": {
-                    "description": "두 숫자를 곱합니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "a": {"type": "number", "description": "첫 번째 숫자"},
-                            "b": {"type": "number", "description": "두 번째 숫자"}
-                        },
-                        "required": ["a", "b"]
-                    }
-                },
-                "divide": {
-                    "description": "첫 번째 숫자를 두 번째 숫자로 나눕니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "a": {"type": "number", "description": "첫 번째 숫자"},
-                            "b": {"type": "number", "description": "두 번째 숫자 (0이 아니어야 함)"}
-                        },
-                        "required": ["a", "b"]
-                    }
-                }
+                "add": "두 개의 float 숫자를 더합니다.",
+                "subtract": "첫 번째 숫자에서 두 번째 숫자를 뺍니다.",
+                "multiply": "두 개의 float 숫자를 곱합니다.",
+                "divide": "첫 번째 숫자를 두 번째 숫자로 나눕니다."
             },
             "resources": {
-                "read_text_file": {
-                    "description": "지정된 경로의 텍스트 파일을 읽어 내용을 반환합니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "텍스트 파일 경로"}
-                        },
-                        "required": ["path"]
-                    }
-                },
-                "read_image_file": {
-                    "description": "지정된 경로의 이미지 파일을 읽어 이미지 데이터를 반환합니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "이미지 파일 경로"}
-                        },
-                        "required": ["path"]
-                    }
-                }
+                "read_text": "지정된 경로의 텍스트 파일을 읽고 내용을 반환합니다.",
+                "read_image": "지정된 경로의 이미지 파일을 읽고 base64로 인코딩된 문자열로 반환합니다."
             },
             "templates": {
-                "greeting_template": {
-                    "description": "인사말 템플릿을 생성합니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "템플릿에 표시할 이름"},
-                            "greeting": {"type": "string", "description": "인사말"},
-                            "message": {"type": "string", "description": "메시지"}
-                        },
-                        "required": ["name", "greeting", "message"]
-                    }
-                }
+                "greeting": "사용자에게 인사말을 제공합니다."
             },
             "prompts": {
-                "custom_prompt": {
-                    "description": "사용자 정의 프롬프트를 생성합니다.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "system_prompt": {"type": "string", "description": "시스템 프롬프트"},
-                            "user_prompt": {"type": "string", "description": "사용자 프롬프트"}
-                        },
-                        "required": ["system_prompt", "user_prompt"]
-                    }
+                "summarize": "제공된 텍스트를 요약합니다."
+            }
+        }
+    
+    def process_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """MCP 요청을 처리하고 적절한 응답을 반환합니다."""
+        try:
+            if "api" not in request:
+                return self.error_response("API not specified")
+            
+            api = request["api"]
+            
+            if api == "describe":
+                return self.describe_api()
+            elif api.startswith("tools/"):
+                tool_name = api.split("/")[1]
+                return self.handle_tools_api(tool_name, request.get("params", {}))
+            elif api.startswith("resources/"):
+                resource_name = api.split("/")[1]
+                return self.handle_resources_api(resource_name, request.get("params", {}))
+            elif api.startswith("templates/"):
+                template_name = api.split("/")[1]
+                return self.handle_templates_api(template_name, request.get("params", {}))
+            elif api.startswith("prompts/"):
+                prompt_name = api.split("/")[1]
+                return self.handle_prompts_api(prompt_name, request.get("params", {}))
+            else:
+                return self.error_response(f"Unknown API: {api}")
+                
+        except Exception as e:
+            return self.error_response(str(e))
+    
+    def describe_api(self) -> Dict[str, Any]:
+        """서버가 제공하는 모든 API에 대한 설명을 반환합니다."""
+        return {
+            "status": "success",
+            "data": {
+                "apis": {
+                    "describe": "서버가 제공하는 모든 API에 대한 설명을 반환합니다.",
+                    "tools/add": self.api_descriptions["tools"]["add"],
+                    "tools/subtract": self.api_descriptions["tools"]["subtract"],
+                    "tools/multiply": self.api_descriptions["tools"]["multiply"],
+                    "tools/divide": self.api_descriptions["tools"]["divide"],
+                    "resources/read_text": self.api_descriptions["resources"]["read_text"],
+                    "resources/read_image": self.api_descriptions["resources"]["read_image"],
+                    "templates/greeting": self.api_descriptions["templates"]["greeting"],
+                    "prompts/summarize": self.api_descriptions["prompts"]["summarize"]
                 }
             }
         }
-    }
-
-# Tool API 구현
-@app.post("/v1/mcp/tools/add")
-async def add_numbers(data: MCPCalculatorInput):
-    """두 숫자를 더합니다."""
-    result = data.a + data.b
-    return ToolCallResult(content=result)
-
-@app.post("/v1/mcp/tools/subtract")
-async def subtract_numbers( MCPCalculatorInput):
-    """첫 번째 숫자에서 두 번째 숫자를 뺍니다."""
-    result = data.a - data.b
-    return ToolCallResult(content=result)
-
-@app.post("/v1/mcp/tools/multiply")
-async def multiply_numbers( MCPCalculatorInput):
-    """두 숫자를 곱합니다."""
-    result = data.a * data.b
-    return ToolCallResult(content=result)
-
-@app.post("/v1/mcp/tools/divide")
-async def divide_numbers( MCPCalculatorInput):
-    """첫 번째 숫자를 두 번째 숫자로 나눕니다."""
-    if data.b == 0:
-        raise HTTPException(status_code=400, detail="0으로 나눌 수 없습니다.")
-    result = data.a / data.b
-    return ToolCallResult(content=result)
-
-# Resource API 구현
-@app.post("/v1/mcp/resources/read_text_file")
-async def read_text_file( MCPFilePathInput):
-    """지정된 경로의 텍스트 파일을 읽어 내용을 반환합니다."""
-    try:
-        file_path = Path(data.path)
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"파일을 찾을 수 없습니다: {data.path}")
-        
-        with open(file_path, "r", encoding="utf-8") as file:
-            content = file.read()
-            
-        return ResourceData(
-            type="text",
-            data=content,
-            mime_type="text/plain"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"파일 읽기 오류: {str(e)}")
-
-@app.post("/v1/mcp/resources/read_image_file")
-async def read_image_file( MCPFilePathInput):
-    """지정된 경로의 이미지 파일을 읽어 이미지 데이터를 반환합니다."""
-    try:
-        file_path = Path(data.path)
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"파일을 찾을 수 없습니다: {data.path}")
-        
-        mime_type, _ = mimetypes.guess_type(file_path)
-        if not mime_type or not mime_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail=f"지원되지 않는 이미지 형식입니다: {mime_type}")
-        
-        with open(file_path, "rb") as file:
-            image_bytes = file.read()
-            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-            
-        return ResourceData(
-            type="image",
-            data=image_b64,
-            mime_type=mime_type
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"이미지 파일 읽기 오류: {str(e)}")
-
-# Template API 구현
-@app.post("/v1/mcp/templates/greeting_template")
-async def greeting_template(data: MCPTemplateInput):
-    """인사말 템플릿을 생성합니다."""
-    template = f"""
-    <div class="greeting-card">
-        <h1>{data.greeting}, {data.name}!</h1>
-        <p>{data.message}</p>
-        <footer>MCP Template Example</footer>
-    </div>
-    """
-    return MCPResponse(
-        type="mcp_completion",
-        choices=[{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": template
+    
+    def handle_tools_api(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """도구 API를 처리합니다."""
+        if tool_name == "add":
+            return self.add_numbers(params)
+        elif tool_name == "subtract":
+            return self.subtract_numbers(params)
+        elif tool_name == "multiply":
+            return self.multiply_numbers(params)
+        elif tool_name == "divide":
+            return self.divide_numbers(params)
+        else:
+            return self.error_response(f"Unknown tool: {tool_name}")
+    
+    def add_numbers(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """두 숫자를 더합니다."""
+        try:
+            a = float(params.get("a", 0))
+            b = float(params.get("b", 0))
+            result = a + b
+            return {
+                "status": "success",
+                "data": {"result": result}
             }
-        }]
-    )
-
-# Prompt API 구현
-@app.post("/v1/mcp/prompts/custom_prompt")
-async def custom_prompt( MCPPromptInput):
-    """사용자 정의 프롬프트를 생성합니다."""
-    return MCPResponse(
-        type="mcp_completion",
-        choices=[{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": f"프롬프트 처리 결과: 시스템 프롬프트 '{data.system_prompt}'에 대한 응답으로, '{data.user_prompt}'에 대한 답변을 생성합니다."
+        except ValueError:
+            return self.error_response("Invalid number format")
+    
+    def subtract_numbers(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """첫 번째 숫자에서 두 번째 숫자를 뺍니다."""
+        try:
+            a = float(params.get("a", 0))
+            b = float(params.get("b", 0))
+            result = a - b
+            return {
+                "status": "success",
+                "data": {"result": result}
             }
-        }]
-    )
+        except ValueError:
+            return self.error_response("Invalid number format")
+    
+    def multiply_numbers(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """두 숫자를 곱합니다."""
+        try:
+            a = float(params.get("a", 0))
+            b = float(params.get("b", 0))
+            result = a * b
+            return {
+                "status": "success",
+                "data": {"result": result}
+            }
+        except ValueError:
+            return self.error_response("Invalid number format")
+    
+    def divide_numbers(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """첫 번째 숫자를 두 번째 숫자로 나눕니다."""
+        try:
+            a = float(params.get("a", 0))
+            b = float(params.get("b", 0))
+            if b == 0:
+                return self.error_response("Division by zero")
+            result = a / b
+            return {
+                "status": "success",
+                "data": {"result": result}
+            }
+        except ValueError:
+            return self.error_response("Invalid number format")
+    
+    def handle_resources_api(self, resource_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """리소스 API를 처리합니다."""
+        if resource_name == "read_text":
+            return self.read_text_file(params)
+        elif resource_name == "read_image":
+            return self.read_image_file(params)
+        else:
+            return self.error_response(f"Unknown resource: {resource_name}")
+    
+    def read_text_file(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """지정된 경로의 텍스트 파일을 읽습니다."""
+        path = params.get("path")
+        if not path:
+            return self.error_response("Path parameter is required")
+        
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                content = file.read()
+            return {
+                "status": "success",
+                "data": {"content": content}
+            }
+        except FileNotFoundError:
+            return self.error_response(f"File not found: {path}")
+        except Exception as e:
+            return self.error_response(f"Error reading file: {str(e)}")
+    
+    def read_image_file(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """지정된 경로의 이미지 파일을 읽고 base64로 인코딩합니다."""
+        path = params.get("path")
+        if not path:
+            return self.error_response("Path parameter is required")
+        
+        try:
+            with open(path, "rb") as file:
+                image_data = file.read()
+                
+            # 이미지 데이터를 base64로 인코딩
+            encoded_data = base64.b64encode(image_data).decode("utf-8")
+            
+            # 파일 확장자 추출
+            _, file_ext = os.path.splitext(path)
+            file_ext = file_ext.lower().strip(".")
+            
+            # MIME 타입 설정
+            mime_types = {
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png": "image/png",
+                "gif": "image/gif",
+                "bmp": "image/bmp",
+                "webp": "image/webp"
+            }
+            mime_type = mime_types.get(file_ext, "application/octet-stream")
+            
+            return {
+                "status": "success",
+                "data": {
+                    "content": encoded_data,
+                    "mime_type": mime_type
+                }
+            }
+        except FileNotFoundError:
+            return self.error_response(f"File not found: {path}")
+        except Exception as e:
+            return self.error_response(f"Error reading image: {str(e)}")
+    
+    def handle_templates_api(self, template_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """템플릿 API를 처리합니다."""
+        if template_name == "greeting":
+            return self.greeting_template(params)
+        else:
+            return self.error_response(f"Unknown template: {template_name}")
+    
+    def greeting_template(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """인사말 템플릿을 반환합니다."""
+        name = params.get("name", "Guest")
+        time_of_day = params.get("time_of_day", "day")
+        
+        greeting = f"안녕하세요, {name}님! 좋은 {time_of_day} 되세요."
+        
+        return {
+            "status": "success",
+            "data": {
+                "template": "greeting",
+                "content": greeting
+            }
+        }
+    
+    def handle_prompts_api(self, prompt_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """프롬프트 API를 처리합니다."""
+        if prompt_name == "summarize":
+            return self.summarize_prompt(params)
+        else:
+            return self.error_response(f"Unknown prompt: {prompt_name}")
+    
+    def summarize_prompt(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """요약 프롬프트를 반환합니다."""
+        text = params.get("text", "")
+        if not text:
+            return self.error_response("Text parameter is required")
+        
+        # 실제로는 AI 모델이 요약을 수행해야 하지만, 여기서는 간단한 예시를 제공합니다.
+        prompt = f"""다음 텍스트를 간결하게 요약해주세요:
 
-# 서버 실행
+{text}
+
+요약:
+"""
+        
+        return {
+            "status": "success",
+            "data": {
+                "prompt": prompt
+            }
+        }
+    
+    def error_response(self, message: str) -> Dict[str, Any]:
+        """오류 응답을 생성합니다."""
+        return {
+            "status": "error",
+            "error": {
+                "message": message
+            }
+        }
+
+# STDIO transport를 처리하는 메인 함수
+def main():
+    server = MCPServer()
+    
+    while True:
+        try:
+            # 표준 입력에서 요청을 읽습니다.
+            request_line = sys.stdin.readline()
+            if not request_line:
+                break
+                
+            # JSON 요청을 파싱합니다.
+            try:
+                request = json.loads(request_line)
+            except json.JSONDecodeError:
+                response = server.error_response("Invalid JSON request")
+            else:
+                # 요청을 처리합니다.
+                response = server.process_request(request)
+            
+            # 응답을 표준 출력으로 전송합니다.
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
+            
+        except Exception as e:
+            # 예외가 발생한 경우 오류 응답을 전송합니다.
+            error_response = server.error_response(f"Server error: {str(e)}")
+            sys.stdout.write(json.dumps(error_response) + "\n")
+            sys.stdout.flush()
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()
