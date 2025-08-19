@@ -1,0 +1,42 @@
+cmake_minimum_required(VERSION 3.16)
+project(hailo_yolo11_seg)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 컴파일러 플래그
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall")
+
+# OpenCV 찾기
+find_package(OpenCV REQUIRED)
+if(OpenCV_FOUND)
+    message(STATUS "OpenCV 버전: ${OpenCV_VERSION}")
+else()
+    message(FATAL_ERROR "OpenCV를 찾을 수 없습니다!")
+endif()
+
+# HailoRT 라이브러리 찾기
+find_library(HAILORT_LIB hailort PATHS /usr/lib /usr/local/lib)
+if(NOT HAILORT_LIB)
+    message(FATAL_ERROR "HailoRT 라이브러리를 찾을 수 없습니다!")
+endif()
+
+# 헤더 파일 경로
+include_directories(${OpenCV_INCLUDE_DIRS})
+include_directories(/usr/include/hailo)
+
+# 실행 파일 생성
+add_executable(${PROJECT_NAME}
+    main.cpp
+    hailo_yolo11_seg.cpp
+)
+
+# 라이브러리 링크
+target_link_libraries(${PROJECT_NAME}
+    ${OpenCV_LIBS}
+    ${HAILORT_LIB}
+)
+
+# 디버그 정보
+message(STATUS "OpenCV 라이브러리: ${OpenCV_LIBS}")
+message(STATUS "HailoRT 라이브러리: ${HAILORT_LIB}")
