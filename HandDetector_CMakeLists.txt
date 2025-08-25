@@ -1,0 +1,85 @@
+cmake_minimum_required(VERSION 3.12)
+project(HandDetector)
+
+# Set C++ standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find required packages
+find_package(OpenCV REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+# Find MediaPipe
+set(MEDIAPIPE_ROOT_PATH "/path/to/mediapipe" CACHE PATH "MediaPipe root directory")
+find_path(MEDIAPIPE_INCLUDE_DIR
+    NAMES mediapipe/framework/calculator_framework.h
+    PATHS ${MEDIAPIPE_ROOT_PATH}
+    PATH_SUFFIXES include
+    REQUIRED
+)
+
+find_library(MEDIAPIPE_LIBRARY
+    NAMES mediapipe_calculators
+    PATHS ${MEDIAPIPE_ROOT_PATH}
+    PATH_SUFFIXES lib bazel-bin/mediapipe/calculators
+    REQUIRED
+)
+
+# Find HailoRT
+find_path(HAILORT_INCLUDE_DIR
+    NAMES hailo/hailort.h
+    PATHS /usr/include /usr/local/include
+    REQUIRED
+)
+
+find_library(HAILORT_LIBRARY
+    NAMES hailort
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
+    REQUIRED
+)
+
+# Include directories
+include_directories(
+    ${OpenCV_INCLUDE_DIRS}
+    ${MEDIAPIPE_INCLUDE_DIR}
+    ${HAILORT_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Add executable
+add_executable(${PROJECT_NAME}
+    main.cpp
+    HandDetector.cpp
+)
+
+# Link libraries
+target_link_libraries(${PROJECT_NAME}
+    ${OpenCV_LIBS}
+    ${MEDIAPIPE_LIBRARY}
+    ${HAILORT_LIBRARY}
+    pthread
+    glog
+    gflags
+    protobuf
+    absl::base
+    absl::strings
+)
+
+# Compiler flags
+target_compile_options(${PROJECT_NAME} PRIVATE
+    -Wall
+    -Wextra
+    -O3
+    -DNDEBUG
+)
+
+# Installation
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION bin
+)
+
+# Print configuration info
+message(STATUS "OpenCV version: ${OpenCV_VERSION}")
+message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")
+message(STATUS "MediaPipe include dir: ${MEDIAPIPE_INCLUDE_DIR}")
+message(STATUS "HailoRT include dir: ${HAILORT_INCLUDE_DIR}")
